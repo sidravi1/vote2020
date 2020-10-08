@@ -21,6 +21,19 @@ def add_availability_columns(df):
     df["inside_all_day"] = df["election_day"].str.contains("ALL DAY - INSIDE")
     df["outside_AM"] = df["election_day"].str.contains("OUTSIDE AM")
     df["outside_PM"] = df["election_day"].str.contains("OUTSIDE PM")
+    df["outside_allday"] = df["outside_AM"] & df["outside_PM"]
+
+    return df
+
+
+def clean_observer_df(df):
+
+    # clean phone number
+    df["phone_number"] = df["phone_number"].str.replace("-", "").replace(" ", "")
+
+    # drop duplicates
+    df = df.sort_values("date_entered")
+    df = df.drop_duplicates(["name", "phone_number"], keep="last")
 
     return df
 
@@ -33,16 +46,20 @@ def get_observer_dataset():
     legal_background = sh.sheet1.col_values(25)[1:]
     election_day = sh.sheet1.col_values(24)[1:]
     name = sh.sheet1.col_values(3)[1:]
+    phone_number = sh.sheet1.col_values(4)[1:]
+    date_entered = sh.sheet1.col_values(1)[1:]
 
     max_length = max([len(legal_background), len(election_day)])
 
     legal_background += ["No"] * (max_length - len(legal_background))
-    legal_background = [(l == "Yes") for l in legal_background]
+    legal_background = [(lb == "Yes") for lb in legal_background]
     election_day += ["None"] * (max_length - len(election_day))
 
     df = pd.DataFrame(
         {
             "name": name,
+            "phone_number": phone_number,
+            "date_entered": date_entered,
             "legal_background": legal_background,
             "election_day": election_day,
             "assigned_am": np.nan,
@@ -51,7 +68,9 @@ def get_observer_dataset():
     )
 
     df = add_availability_columns(df)
+    df = clean_observer_df(df)
 
+    df = df.sort_values("outside_allday", ascending=False)
     return df
 
 
@@ -66,12 +85,23 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
 
     # TODO : Fix assignment when working morning and evening
 
-    available_mask = observers_df[location] == True & (
-        observers_df["legal_background"] == need_legal_background
-    ) & (observers_df["assigned"].isna())
+    if "AM" in location:
+        assignment_cols = ["assigned_am"]
+    elif "PM" in location:
+        assignment_cols = ["assigned_pm"]
+    else:
+        assignment_cols = ["assigned_pm", "assigned_am"]
+
+    assigned = observers_df[assignment_cols].isna().all(axis=1)
+
+    available_mask = (
+        (observers_df[location])
+        & (observers_df["legal_background"] == need_legal_background)
+        & assigned
+    )
 
     available_names = observers_df[available_mask]["name"].values
-    observers_df.loc[available_mask, "assigned"] = True
+    observers_df.loc[available_mask, assignment_cols] = True
 
     if len(available_names) < n_required:
         available_names = np.pad(
@@ -119,7 +149,9 @@ if __name__ == "__main__":
     assign_observers(precinct, observers, "outside_am", False)
     assign_observers(precinct, observers, "outside_pm", False)
 
-    precinct.to_csv(
-        Path(__file__).parent / "../data/01_output/assigned_precincts.csv", index=False
+    precinct.to_excel(
+        Path(__file__).parent / "../data/01_output/assigned_precincts.xlsx",
+        index=False,
+        encoding="utf-8",
     )
     print(precinct)
