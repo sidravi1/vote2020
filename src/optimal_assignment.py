@@ -8,6 +8,9 @@ from pathlib import Path
 
 
 def load_yaml_config():
+    """
+    Loads the config yaml file
+    """
 
     file_name = Path(__file__).parent / "../config/parameters.yml"
     with file_name.open() as params_file:
@@ -16,74 +19,114 @@ def load_yaml_config():
     return params
 
 
-def add_availability_columns(df):
+def add_availability_columns(observers_df):
+    """
+    Adds availability columns to observers dataframe
+    """
 
-    df["inside_all_day"] = df["election_day"].str.contains("ALL DAY - INSIDE")
-    df["outside_AM"] = df["election_day"].str.contains("OUTSIDE AM")
-    df["outside_PM"] = df["election_day"].str.contains("OUTSIDE PM")
-    df["outside_allday"] = df["outside_AM"] & df["outside_PM"]
+    observers_df["inside_all_day"] = observers_df["election_day"].str.contains(
+        "ALL DAY - INSIDE"
+    )
+    observers_df["outside_AM"] = observers_df["election_day"].str.contains("OUTSIDE AM")
+    observers_df["outside_PM"] = observers_df["election_day"].str.contains("OUTSIDE PM")
+    observers_df["outside_allday"] = (
+        observers_df["outside_AM"] & observers_df["outside_PM"]
+    )
 
-    return df
+    return observers_df
 
 
-def clean_observer_df(df):
+def clean_observer_df(observers_df):
+    """
+    Cleans and formats observers dataframe
+    """
 
     # clean phone number
-    df["phone_number"] = df["phone_number"].str.replace("-", "").replace(" ", "")
+    observers_df["phone_number"] = (
+        observers_df["phone_number"].str.replace("-", "").replace(" ", "")
+    )
 
     # drop duplicates
-    df = df.sort_values("date_entered")
-    df = df.drop_duplicates(["name", "phone_number"], keep="last")
+    observers_df = observers_df.sort_values("date_entered")
+    observers_df = observers_df.drop_duplicates(["name", "phone_number"], keep="last")
 
-    return df
+    # map legal background as boolean
+    observers_df["legal_background"] = observers_df["legal_background"] == "Yes"
+
+    return observers_df
 
 
 def get_observer_dataset():
+    """
+    Loads the google sheets observer forms and returns a dataframe with
+    important columns. Adds additional columns and cleans data
+    """
 
     gc = gspread.oauth()
     sh = gc.open("R5-Wake-Poll Observer Google Form (Responses)")
 
-    legal_background = sh.sheet1.col_values(25)[1:]
-    election_day = sh.sheet1.col_values(24)[1:]
-    name = sh.sheet1.col_values(3)[1:]
-    phone_number = sh.sheet1.col_values(4)[1:]
-    date_entered = sh.sheet1.col_values(1)[1:]
+    params = load_yaml_config()["columns_map"]
+    required_length = sh.sheet1.row_count
 
-    max_length = max([len(legal_background), len(election_day)])
+    all_columns = {
+        "assigned_am": np.nan,
+        "assigned_pm": np.nan,
+    }
 
-    legal_background += ["No"] * (max_length - len(legal_background))
-    legal_background = [(lb == "Yes") for lb in legal_background]
-    election_day += ["None"] * (max_length - len(election_day))
+    for column_name, column_params in params.items():
+        column_data = sh.sheet1.col_values(column_params["col_num"])[1:]
+        column_data += [column_params["fill_missing"]] * (
+            required_length - len(column_data)
+        )
 
-    df = pd.DataFrame(
-        {
-            "name": name,
-            "phone_number": phone_number,
-            "date_entered": date_entered,
-            "legal_background": legal_background,
-            "election_day": election_day,
-            "assigned_am": np.nan,
-            "assigned_pm": np.nan,
-        }
-    )
+        all_columns[column_name] = column_data
 
-    df = add_availability_columns(df)
-    df = clean_observer_df(df)
+    observer_df = pd.DataFrame(all_columns)
+    observer_df = add_availability_columns(observer_df)
+    observer_df = clean_observer_df(observer_df)
+    observer_df = observer_df.sort_values("outside_allday", ascending=False)
 
-    df = df.sort_values("outside_allday", ascending=False)
-    return df
+    return observer_df
 
 
 def get_precinct_dataset():
+    """
+    Load precinct excel sheet. Note that it much define "Priority" column
+    """
 
-    df = pd.read_excel("../data/PollingPlaceDetails.xls")
-    df = df.sort_values("Priority")
-    return df
+    precinct = pd.read_excel("../data/PollingPlaceDetails.xls")
+    precinct = precinct.sort_values("Priority")
+    return precinct
 
 
 def get_available_observers(observers_df, n_required, location, need_legal_background):
+    """
+    Get available observers that can be assigned to precincts
 
-    # TODO : Fix assignment when working morning and evening
+    Parameters
+    ----------
+    observer_df: pd.DataFrame
+        The observers dataframe
+    n_required: int
+        The number of observers required. This is the maximum that will be returned. If
+        there are few that these available, it will be padded with np.nan
+    location: string
+        Must be one of "inside_all_day", "outside_AM", "outside_PM"
+    need_legal_background: bool
+        If observer must have legal expertise
+
+    Returns
+    -------
+    available_names: np.array
+        An array of available observer names to assign to precincts
+
+    Note
+    ----
+    SIDE EFFECT ALERT: Once observers are returned, they are also marked in the
+    observers_df as no longer being free.
+
+    #TODO: Fix this side effect
+    """
 
     if "AM" in location:
         assignment_cols = ["assigned_am"]
@@ -116,6 +159,36 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
 
 
 def assign_observers(precinct, observers, location, is_attorney, params=None):
+    """
+    Assign free observers to precincts.
+
+    Parameters
+    ----------
+    precinct: pd.DataFrame
+        The precinct DataFrame
+    observers: pd.DataFrame
+        The observets DataFrame
+    location: string
+        one of "inside", "outside_am", "outside_pm"
+    is_attorney: bool
+        If available observer should be an attorney
+    params: dict, optional
+        Dictionary of parameters
+
+    Returns
+    -------
+    precinct: pd.DataFrame
+        The updated precinct DataFrame
+    observers: pd.DataFrame
+        The updated observers DataFrame
+
+    Note
+    ----
+    You don't really need the returned values since the original input
+    dataframes are updated.
+
+    #TODO: Should fix this side effect
+    """
 
     if params is None:
         params = load_yaml_config()[location]
@@ -140,8 +213,7 @@ if __name__ == "__main__":
     observers = get_observer_dataset()
     precinct = get_precinct_dataset()
 
-    # assign inside attorneys
-
+    # assign volunteers
     assign_observers(precinct, observers, "inside", True)
     assign_observers(precinct, observers, "outside_am", True)
     assign_observers(precinct, observers, "outside_pm", True)
@@ -154,4 +226,5 @@ if __name__ == "__main__":
         index=False,
         encoding="utf-8",
     )
+
     print(precinct)

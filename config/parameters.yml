@@ -1,3 +1,20 @@
+columns_map:
+  name: 
+    col_num: 3
+    fill_missing: "NA"
+  phone_number:
+    col_num: 4
+    fill_missing: None
+  date_entered:
+    col_num: 1
+    fill_missing: None
+  election_day:
+    col_num: 24
+    fill_missing: "NA"
+  legal_background:
+    col_num: 25
+    fill_missing: "No"
+
 inside:
   precinct_observer: inside_observer
   precinct_is_legal: inside_legal
