@@ -94,7 +94,9 @@ def get_precinct_dataset():
     Load precinct excel sheet. Note that it much define "Priority" column
     """
 
-    precinct = pd.read_excel("../data/PollingPlaceDetails.xls")
+    precinct = pd.read_excel(
+        Path(__file__).parent / "../data/00_raw/PollingPlaceDetails.xls"
+    )
     precinct = precinct.sort_values("Priority")
     return precinct
 
