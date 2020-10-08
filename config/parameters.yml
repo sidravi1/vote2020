@@ -1,0 +1,15 @@
+inside:
+  precinct_observer: inside_observer
+  precinct_is_legal: inside_legal
+  observer_availability: inside_all_day
+
+outside_am:
+  precinct_observer: outside_am_observer
+  precinct_is_legal: outside_am_legal
+  observer_availability: outside_AM
+
+outside_pm:
+  precinct_observer: outside_pm_observer
+  precinct_is_legal: outside_pm_legal
+  observer_availability: outside_PM
+

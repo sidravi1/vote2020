@@ -1,4 +1,7 @@
-# Byte-compiled / optimized / DLL files
+data/01_output/*
+*.swp
+
+#Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
