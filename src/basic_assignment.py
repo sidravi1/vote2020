@@ -76,9 +76,11 @@ def get_observer_dataset():
     """
 
     gc = gspread.oauth()
-    sh = gc.open("R5-Wake-Poll Observer Google Form (Responses)")
+    config = load_yaml_config()
+    params = config["columns_map"]
 
-    params = load_yaml_config()["columns_map"]
+    sh = gc.open(config["observer_google_sheet"])
+
     required_length = sh.sheet1.row_count
 
     all_columns = {
