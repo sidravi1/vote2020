@@ -1,230 +1,326 @@
-import gspread
-
 import pandas as pd
 import numpy as np
-import yaml
+import networkx as nx
+import matplotlib.pyplot as plt
+
+import src.basic_assignment as ba
 
 from pathlib import Path
 
 
-def load_yaml_config():
+class PreferenceNetwork:
     """
-    Loads the config yaml file
-    """
-
-    file_name = Path(__file__).parent / "../config/parameters.yml"
-    with file_name.open() as params_file:
-        params = yaml.full_load(params_file)
-
-    return params
-
-
-def add_availability_columns(observers_df):
-    """
-    Adds availability columns to observers dataframe
+    This class is a wrapper around a nx.DiGraph() and allows
+    for easy setup and projections of the bipartite graph
     """
 
-    observers_df["inside_all_day"] = observers_df["election_day"].str.contains(
-        "ALL DAY - INSIDE"
-    )
-    observers_df["outside_AM"] = observers_df["election_day"].str.contains("OUTSIDE AM")
-    observers_df["outside_PM"] = observers_df["election_day"].str.contains("OUTSIDE PM")
-    observers_df["outside_allday"] = (
-        observers_df["outside_AM"] & observers_df["outside_PM"]
-    )
+    def __init__(self, preference_edges, ownership_edges):
 
-    return observers_df
+        G = nx.DiGraph()
 
+        for node in ownership_edges["Polling Place Name"]:
+            G.add_node(node, node_type="pollstation", node_color="darkred")
+        for node in ownership_edges.iloc[:, 1]:
+            G.add_node(node, node_type="observer", node_color="dodgerblue")
+        for node in preference_edges["preference"]:
+            G.add_node(node, node_type="pollstation", node_color="darkred")
+        for node in preference_edges["observer"]:
+            G.add_node(node, node_type="observer", node_color="dodgerblue")
 
-def clean_observer_df(observers_df):
-    """
-    Cleans and formats observers dataframe
-    """
+        G.add_edges_from(ownership_edges.itertuples(index=False, name=None))
+        G.add_edges_from(preference_edges.itertuples(index=False, name=None))
 
-    # clean phone number
-    observers_df["phone_number"] = (
-        observers_df["phone_number"].str.replace("-", "").replace(" ", "")
-    )
+        self.G = G
 
-    # drop duplicates
-    observers_df = observers_df.sort_values("date_entered")
-    observers_df = observers_df.drop_duplicates(["name", "phone_number"], keep="last")
+    def draw(self):
+        """
+        Returns a matplotliDb plot of the graph
+        """
+        f, ax = plt.subplots(figsize=(10, 7))
 
-    # map legal background as boolean
-    observers_df["legal_background"] = observers_df["legal_background"] == "Yes"
-
-    return observers_df
-
-
-def get_observer_dataset():
-    """
-    Loads the google sheets observer forms and returns a dataframe with
-    important columns. Adds additional columns and cleans data
-    """
-
-    gc = gspread.oauth()
-    sh = gc.open("R5-Wake-Poll Observer Google Form (Responses)")
-
-    params = load_yaml_config()["columns_map"]
-    required_length = sh.sheet1.row_count
-
-    all_columns = {
-        "assigned_am": np.nan,
-        "assigned_pm": np.nan,
-    }
-
-    for column_name, column_params in params.items():
-        column_data = sh.sheet1.col_values(column_params["col_num"])[1:]
-        column_data += [column_params["fill_missing"]] * (
-            required_length - len(column_data)
+        pos = nx.spring_layout(self.G)
+        nx.draw_networkx_edges(self.G, pos, alpha=0.2)
+        nx.draw_networkx_nodes(
+            self.G,
+            pos,
+            node_color=nx.get_node_attributes(self.G, "node_color").values(),
+            node_size=50,
         )
 
-        all_columns[column_name] = column_data
+        return f
 
-    observer_df = pd.DataFrame(all_columns)
-    observer_df = add_availability_columns(observer_df)
-    observer_df = clean_observer_df(observer_df)
-    observer_df = observer_df.sort_values("outside_allday", ascending=False)
+    def __repr__(self):
+        """
+        Calls the networkx.DiGraph __repr__ method
+        """
+        return self.G.__repr__()
 
-    return observer_df
+    def get_projection(self, node_type="observer"):
+        """
+        Get projection of bipartite network for `node_type`
+        """
+
+        obs_nodes = [
+            x for x, y in self.G.nodes(data=True) if y["node_type"] == node_type
+        ]
+        G_proj = nx.bipartite.projected_graph(self.G, obs_nodes)
+
+        return G_proj
+
+    def get_projection_adj(self, node_type="observer"):
+        """
+        Get the adjacency matrix for the projection of the bipartite network
+        """
+        G_proj = self.get_projection(node_type)
+        adjacency_matrix = pd.DataFrame(G_proj.adjacency(), columns=["from", "to"])
+        adjacency_matrix["to"] = adjacency_matrix["to"].apply(lambda x: list(x.keys()))
+
+        return adjacency_matrix
 
 
-def get_precinct_dataset():
+def get_zipcode_distance(zip1, zip2):
     """
-    Load precinct excel sheet. Note that it much define "Priority" column
+    Just looks at the difference between zipcodes.
+    Fancier version may use an api to get actual distance.
     """
 
-    precinct = pd.read_excel(
-        Path(__file__).parent / "../data/00_raw/PollingPlaceDetails.xls"
-    )
-    precinct = precinct.sort_values("Priority")
-    return precinct
+    return np.abs(int(zip1) - int(zip2))
 
 
-def get_available_observers(observers_df, n_required, location, need_legal_background):
+def resolve_cycle(pref_network, verbose=False):
     """
-    Get available observers that can be assigned to precincts
+    Assign preferences as per the cycle
 
     Parameters
     ----------
-    observer_df: pd.DataFrame
-        The observers dataframe
-    n_required: int
-        The number of observers required. This is the maximum that will be returned. If
-        there are few that these available, it will be padded with np.nan
-    location: string
-        Must be one of "inside_all_day", "outside_AM", "outside_PM"
-    need_legal_background: bool
-        If observer must have legal expertise
+    pref_network: PreferenceNetwork
+        A PreferenceNetwork object
+    verbose: bool, optional
+        If debug statements should be printed. False by default
 
     Returns
     -------
-    available_names: np.array
-        An array of available observer names to assign to precincts
-
-    Note
-    ----
-    SIDE EFFECT ALERT: Once observers are returned, they are also marked in the
-    observers_df as no longer being free.
-
-    #TODO: Fix this side effect
+    preferences: dict
+        Matched preferences
     """
 
-    if "AM" in location:
-        assignment_cols = ["assigned_am"]
-    elif "PM" in location:
-        assignment_cols = ["assigned_pm"]
-    else:
-        assignment_cols = ["assigned_pm", "assigned_am"]
+    G_proj = pref_network.get_projection()
+    adj_df = pref_network.get_projection_adj()
 
-    assigned = observers_df[assignment_cols].isna().all(axis=1)
+    # find self cycles
+    self_mask = adj_df["to"].apply(len) == 0
+    preferences = {}
+    if self_mask.any():
+        observers_matched = adj_df.loc[self_mask, "from"]
+        if verbose:
+            print("Self: ", list(observers_matched))
+        preferences.update(dict(pref_network.G.out_edges(list(observers_matched))))
 
-    available_mask = (
-        (observers_df[location])
-        & (observers_df["legal_background"] == need_legal_background)
-        & assigned
-    )
+    try:
+        for observer, _ in nx.find_cycle(G_proj):
+            if verbose:
+                print("Cycle : ", observer)
+            preferences.update(dict(pref_network.G.out_edges([observer])))
+    except nx.NetworkXNoCycle:
+        pass
 
-    available_names = observers_df[available_mask]["name"].values
-    observers_df.loc[available_mask, assignment_cols] = True
-
-    if len(available_names) < n_required:
-        available_names = np.pad(
-            available_names,
-            (0, n_required - len(available_names)),
-            constant_values=np.nan,
-        )
-    elif len(available_names) > n_required:
-        available_names = available_names[:n_required]
-
-    return available_names
+    return preferences
 
 
-def assign_observers(precinct, observers, location, is_attorney, params=None):
+def get_matched_sets(distance_df, merged_df, column_to_optimise, verbose=False):
     """
-    Assign free observers to precincts.
+    Iterate through the nodes and their preferences, looking for cycles and resolving
+    these. See https://en.wikipedia.org/wiki/Top_trading_cycle
 
     Parameters
     ----------
-    precinct: pd.DataFrame
-        The precinct DataFrame
-    observers: pd.DataFrame
-        The observets DataFrame
-    location: string
-        one of "inside", "outside_am", "outside_pm"
-    is_attorney: bool
-        If available observer should be an attorney
-    params: dict, optional
-        Dictionary of parameters
+    distance_df: pd.DataFrame
+        A dataframe of distances between polling locations (cols) and observers (rows)
+    merged_df: pd.DataFrame
+        A dataframe with polling locations with post code of observer added
+    column_to_optimise: string
+        Specifies the observer columns that needs to be optimised
+        Must be one of 'inside_observer', 'outside_am_observer', 'outside_pm_observer'
+    verbose: bool, optional
+        If debug data should be printed to screen
 
     Returns
     -------
-    precinct: pd.DataFrame
-        The updated precinct DataFrame
-    observers: pd.DataFrame
-        The updated observers DataFrame
+    matched_set: dict
+        The optimised match list.
+        A dictionary with keys as observers and values as polling locations
 
-    Note
-    ----
-    You don't really need the returned values since the original input
-    dataframes are updated.
-
-    #TODO: Should fix this side effect
     """
 
-    if params is None:
-        params = load_yaml_config()[location]
+    matched_set = {}
+    while len(distance_df) > 0:
+        if verbose:
+            print(" >>>>>> ", len(distance_df))
+        preference = np.argmin(distance_df.values, axis=1)
+        preference_edges = pd.DataFrame(
+            {
+                "observer": distance_df.index,
+                "preference": distance_df.columns[preference],
+            }
+        )
+        ownership_edges = merged_df.loc[
+            merged_df["Polling Place Name"].isin(distance_df.columns[preference]),
+            ["Polling Place Name", column_to_optimise],
+        ]
 
-    missing_observer = precinct[params["precinct_observer"]].isna()
-    precinct.loc[
-        missing_observer, params["precinct_observer"]
-    ] = get_available_observers(
-        observers, missing_observer.sum(), params["observer_availability"], is_attorney,
+        PN = PreferenceNetwork(preference_edges, ownership_edges)
+        matched_pairs = resolve_cycle(PN, verbose)
+        matched_set.update(matched_pairs)
+
+        distance_df = distance_df.drop(matched_pairs.keys())
+        distance_df = distance_df.drop(matched_pairs.values(), axis=1)
+
+    return matched_set
+
+
+def optimise_assignment(precinct, observers, column_to_optimise):
+    """
+    Creates a distance matrix and runs the top-trading algorithm.
+
+    Parameters
+    -----------
+    precinct: pd.DataFrame
+        The dataframe of polling station precincts to optimise
+    observers: pd.DataFrame
+        The list of all observers
+    column_to_optimise: string
+        Specifies the observer columns that needs to be optimised
+        Must be one of 'inside_observer', 'outside_am_observer', 'outside_pm_observer'
+
+    Returns
+    -------
+    np.array
+        The ordered list of observers for `column_to_optimise` for
+        the precincts provided
+
+    """
+    if len(precinct) == 0:
+        return pd.Series([], name=column_to_optimise)
+
+    merged_df = precinct.merge(
+        observers[["name", "post_code"]], left_on=column_to_optimise, right_on="name"
+    )
+    precinct_list = merged_df[["Polling Place Name", "Zip"]]
+    observer_list = merged_df[[column_to_optimise, "post_code"]]
+    distance = np.abs(
+        precinct_list.Zip.values[np.newaxis, :]
+        - observer_list.post_code.values[:, np.newaxis]
+    )
+    distance_df = pd.DataFrame(
+        distance,
+        index=observer_list[column_to_optimise],
+        columns=precinct_list["Polling Place Name"],
     )
 
-    precinct.loc[
-        missing_observer & ~precinct[params["precinct_observer"]].isna(),
-        params["precinct_is_legal"],
-    ] = is_attorney
-    return precinct, observers
+    merged_df["current_distance"] = np.abs(merged_df["Zip"] - merged_df["post_code"])
+
+    matched_set = get_matched_sets(distance_df, merged_df, column_to_optimise)
+
+    df = pd.DataFrame([matched_set], index=["pollingstation"]).T.reset_index()
+    df.columns = [column_to_optimise, "pollingstation"]
+    precinct[["Pct", "Polling Place Name"]].merge(
+        df, left_on="Polling Place Name", right_on="pollingstation"
+    ).drop("pollingstation", axis=1)
+
+    return df[column_to_optimise].values
 
 
 if __name__ == "__main__":
 
-    params = load_yaml_config()
-    observers = get_observer_dataset()
-    precinct = get_precinct_dataset()
+    observers = ba.get_observer_dataset()
+    precinct = ba.get_precinct_dataset()
+    precinct, observers = ba.run_ordered_assignment(precinct, observers)
 
-    # assign volunteers
-    assign_observers(precinct, observers, "inside", True)
-    assign_observers(precinct, observers, "outside_am", True)
-    assign_observers(precinct, observers, "outside_pm", True)
-    assign_observers(precinct, observers, "inside", False)
-    assign_observers(precinct, observers, "outside_am", False)
-    assign_observers(precinct, observers, "outside_pm", False)
+    # Inside legal
+
+    precinct_subset = precinct[precinct["inside_legal"] == True]  # noqa: E712
+    precinct.loc[
+        precinct["inside_legal"] == True, "inside_observer"  # noqa: E712
+    ] = optimise_assignment(precinct_subset, observers, "inside_observer")
+
+    # Outside both legal
+
+    mask = (precinct["outside_am_legal"] == True) & (  # noqa: E712
+        precinct["outside_am_observer"] == precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_am_observer"
+    )
+    precinct.loc[mask, "outside_am_observer"] = optimised_observer_list
+    precinct.loc[mask, "outside_pm_observer"] = optimised_observer_list
+
+    # Outside am only legal
+
+    mask = (precinct["outside_am_legal"] == True) & (  # noqa: E712
+        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_am_observer"
+    )
+    precinct.loc[mask, "outside_am_observer"] = optimised_observer_list
+
+    # Outside pm only legal
+
+    mask = (precinct["outside_pm_legal"] == True) & (  # noqa: E712
+        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_pm_observer"
+    )
+    precinct.loc[mask, "outside_pm_observer"] = optimised_observer_list
+
+    # Inside non-legal
+
+    precinct_subset = precinct[precinct["inside_legal"] == False]  # noqa: E712
+
+    precinct.loc[
+        precinct["inside_legal"] == False, "inside_observer"  # noqa: E712
+    ] = optimise_assignment(precinct_subset, observers, "inside_observer")
+
+    # Outside both not-legal
+
+    mask = (precinct["outside_am_legal"] == False) & (  # noqa: E712
+        precinct["outside_am_observer"] == precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_am_observer"
+    )
+    precinct.loc[mask, "outside_am_observer"] = optimised_observer_list
+    precinct.loc[mask, "outside_pm_observer"] = optimised_observer_list
+
+    # Outside am only legal
+
+    mask = (precinct["outside_am_legal"] == False) & (  # noqa: E712
+        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_am_observer"
+    )
+    precinct.loc[mask, "outside_am_observer"] = optimised_observer_list
+
+    # Outside pm only legal
+
+    mask = (precinct["outside_pm_legal"] == False) & (  # noqa: E712
+        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    )
+    precinct_subset = precinct[mask]
+    optimised_observer_list = optimise_assignment(
+        precinct_subset, observers, "outside_pm_observer"
+    )
+    precinct.loc[mask, "outside_pm_observer"] = optimised_observer_list
 
     precinct.to_excel(
-        Path(__file__).parent / "../data/01_output/assigned_precincts.xlsx",
+        Path(__file__).parent / "../data/01_output/optimised_assigned_precincts.xlsx",
         index=False,
         encoding="utf-8",
     )
