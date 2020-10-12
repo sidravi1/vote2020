@@ -27,11 +27,17 @@ def add_availability_columns(observers_df):
     observers_df["inside_all_day"] = observers_df["election_day"].str.contains(
         "ALL DAY - INSIDE"
     )
-    observers_df["outside_AM"] = observers_df["election_day"].str.contains("OUTSIDE AM")
-    observers_df["outside_PM"] = observers_df["election_day"].str.contains("OUTSIDE PM")
-    observers_df["outside_allday"] = (
+    observers_df["outside_AM"] = observers_df["election_day"].str.contains(
+        "OUTSIDE AM"
+    ) | observers_df["election_day"].str.contains("ALL DAY - OUTSIDE")
+    observers_df["outside_PM"] = observers_df["election_day"].str.contains(
+        "OUTSIDE PM"
+    ) | observers_df["election_day"].str.contains("ALL DAY - OUTSIDE")
+
+    observers_df["outside_all_day"] = (
         observers_df["outside_AM"] & observers_df["outside_PM"]
-    )
+    ) | (observers_df["election_day"].str.contains("ALL DAY - OUTSIDE"))
+    observers_df
 
     return observers_df
 
@@ -99,7 +105,7 @@ def get_observer_dataset():
     observer_df = pd.DataFrame(all_columns)
     observer_df = add_availability_columns(observer_df)
     observer_df = clean_observer_df(observer_df)
-    observer_df = observer_df.sort_values("outside_allday", ascending=False)
+    observer_df = observer_df.sort_values(["outside_all_day"], ascending=False)
 
     return observer_df
 
@@ -113,6 +119,7 @@ def get_precinct_dataset():
         Path(__file__).parent / "../data/00_raw/PollingPlaceDetails.xls"
     )
     precinct = precinct.sort_values("Priority")
+    precinct = precinct.fillna("")
     return precinct
 
 
@@ -128,7 +135,7 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
         The number of observers required. This is the maximum that will be returned. If
         there are few that these available, it will be padded with np.nan
     location: string
-        Must be one of "inside_all_day", "outside_AM", "outside_PM"
+        Must be one of "inside_all_day", "outside_AM", "outside_PM", "outside_all_day"
     need_legal_background: bool
         If observer must have legal expertise
 
@@ -145,9 +152,9 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
     #TODO: Fix this side effect
     """
 
-    if "AM" in location:
+    if location == "outside_AM":
         assignment_cols = ["assigned_am"]
-    elif "PM" in location:
+    elif location == "outside_PM":
         assignment_cols = ["assigned_pm"]
     else:
         assignment_cols = ["assigned_pm", "assigned_am"]
@@ -165,13 +172,17 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
 
     if len(available_names) < n_required:
         available_names = np.pad(
-            available_names,
-            (0, n_required - len(available_names)),
-            constant_values=np.nan,
+            available_names, (0, n_required - len(available_names)), constant_values="",
         )
     elif len(available_names) > n_required:
         available_names = available_names[:n_required]
 
+    if (location == "outside_all_day") and (len(available_names) > 0):
+        print(location, len(available_names), n_required)
+        available_names = (
+            np.repeat(available_names, 2).reshape(n_required, -1).squeeze()
+        )
+        print(available_names.shape)
     return available_names
 
 
@@ -184,9 +195,9 @@ def assign_observers(precinct, observers, location, is_attorney, params=None):
     precinct: pd.DataFrame
         The precinct DataFrame
     observers: pd.DataFrame
-        The observets DataFrame
+        The observers DataFrame
     location: string
-        one of "inside", "outside_am", "outside_pm"
+        one of "inside", "outside_am", "outside_pm", "outside_both"
     is_attorney: bool
         If available observer should be an attorney
     params: dict, optional
@@ -210,7 +221,13 @@ def assign_observers(precinct, observers, location, is_attorney, params=None):
     if params is None:
         params = load_yaml_config()[location]
 
-    missing_observer = precinct[params["precinct_observer"]].isna()
+    missing_observer = (precinct[params["precinct_observer"]] == "").all(axis=1)
+    print(
+        location,
+        is_attorney,
+        "PRECINCT SHAPE: ",
+        precinct.loc[missing_observer, params["precinct_observer"]].shape,
+    )
     precinct.loc[
         missing_observer, params["precinct_observer"]
     ] = get_available_observers(
@@ -218,9 +235,18 @@ def assign_observers(precinct, observers, location, is_attorney, params=None):
     )
 
     precinct.loc[
-        missing_observer & ~precinct[params["precinct_observer"]].isna(),
+        missing_observer,  # & ~(precinct[params["precinct_observer"]] .isna().all(axis=1),
         params["precinct_is_legal"],
     ] = is_attorney
+
+    observers_allocated = observers.merge(
+        precinct[[params["precinct_observer"][0], "Polling Place Name"]],
+        left_on="name",
+        right_on=params["precinct_observer"][0],
+        how="left",
+    )
+    observers[params["observer_loc"]] = observers_allocated["Polling Place Name"].values
+
     return precinct, observers
 
 
@@ -243,9 +269,11 @@ def run_ordered_assignment(precinct, observers):
 
     """
     assign_observers(precinct, observers, "inside", True)
+    assign_observers(precinct, observers, "outside_both", True)
     assign_observers(precinct, observers, "outside_am", True)
     assign_observers(precinct, observers, "outside_pm", True)
     assign_observers(precinct, observers, "inside", False)
+    assign_observers(precinct, observers, "outside_both", False)
     assign_observers(precinct, observers, "outside_am", False)
     assign_observers(precinct, observers, "outside_pm", False)
 
@@ -261,6 +289,12 @@ if __name__ == "__main__":
 
     precinct.to_excel(
         Path(__file__).parent / "../data/01_output/assigned_precincts.xlsx",
+        index=False,
+        encoding="utf-8",
+    )
+
+    observers.to_excel(
+        Path(__file__).parent / "../data/01_output/assigned_observers.xlsx",
         index=False,
         encoding="utf-8",
     )
