@@ -63,7 +63,10 @@ def clean_observer_df(observers_df):
     observers_df["post_code"] = (
         observers_df["post_code"].astype(str).apply(lambda x: int(x.split("-")[0]))
     )
-    observers_df = observers_df.loc[observers_df.post_code.isin(valid_post_codes)]
+    observers_df["from_county"] = False
+    observers_df.loc[
+        observers_df.post_code.isin(valid_post_codes), "from_county"
+    ] = True
 
     # drop duplicates
     observers_df = observers_df.sort_values("date_entered")
@@ -123,7 +126,9 @@ def get_precinct_dataset():
     return precinct
 
 
-def get_available_observers(observers_df, n_required, location, need_legal_background):
+def get_available_observers(
+    observers_df, n_required, location, need_legal_background, need_from_county
+):
     """
     Get available observers that can be assigned to precincts
 
@@ -138,6 +143,8 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
         Must be one of "inside_all_day", "outside_AM", "outside_PM", "outside_all_day"
     need_legal_background: bool
         If observer must have legal expertise
+    need_from_county: bool
+        If observer must be from the county
 
     Returns
     -------
@@ -166,6 +173,9 @@ def get_available_observers(observers_df, n_required, location, need_legal_backg
         & (observers_df["legal_background"] == need_legal_background)
         & assigned
     )
+
+    if need_from_county:
+        available_mask = available_mask & (observers_df["from_county"])
 
     available_names = observers_df[available_mask]["name"].values
     observers_df.loc[available_mask, assignment_cols] = True
@@ -221,6 +231,7 @@ def assign_observers(precinct, observers, location, is_attorney, params=None):
     if params is None:
         params = load_yaml_config()[location]
 
+    from_county = params["from_county"]
     missing_observer = (precinct[params["precinct_observer"]] == "").all(axis=1)
     print(
         location,
@@ -231,13 +242,14 @@ def assign_observers(precinct, observers, location, is_attorney, params=None):
     precinct.loc[
         missing_observer, params["precinct_observer"]
     ] = get_available_observers(
-        observers, missing_observer.sum(), params["observer_availability"], is_attorney,
+        observers,
+        missing_observer.sum(),
+        params["observer_availability"],
+        is_attorney,
+        from_county,
     )
 
-    precinct.loc[
-        missing_observer,  # & ~(precinct[params["precinct_observer"]] .isna().all(axis=1),
-        params["precinct_is_legal"],
-    ] = is_attorney
+    precinct.loc[missing_observer, params["precinct_is_legal"]] = is_attorney
 
     observers_allocated = observers.merge(
         precinct[[params["precinct_observer"][0], "Polling Place Name"]],

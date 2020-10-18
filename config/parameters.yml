@@ -72,6 +72,7 @@ valid_post_codes: # from: https://www.zillow.com/browse/homes/nc/wake-county/
   - 27513
 
 inside:
+  from_county: True
   precinct_observer: 
    - inside_observer
   precinct_is_legal: inside_legal
@@ -79,6 +80,7 @@ inside:
   observer_loc: inside_location
 
 outside_am:
+  from_county: False
   precinct_observer: 
    - outside_am_observer
   precinct_is_legal: outside_am_legal
@@ -86,6 +88,7 @@ outside_am:
   observer_loc: outside_am_location
 
 outside_pm:
+  from_county: False
   precinct_observer: 
    - outside_pm_observer
   precinct_is_legal: outside_pm_legal
@@ -93,6 +96,7 @@ outside_pm:
   observer_loc: outside_pm_location
 
 outside_both:
+  from_county: False
   precinct_observer: 
     - outside_pm_observer
     - outside_am_observer

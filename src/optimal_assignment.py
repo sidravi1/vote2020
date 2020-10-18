@@ -238,16 +238,22 @@ if __name__ == "__main__":
 
     # Inside legal
 
-    precinct_subset = precinct[precinct["inside_legal"] == True]  # noqa: E712
+    precinct_subset = precinct[
+        precinct["inside_legal"] & (precinct["inside_observer"] != "")
+    ]
     precinct.loc[
-        precinct["inside_legal"] == True, "inside_observer"  # noqa: E712
+        (precinct["inside_legal"]) & (precinct["inside_observer"] != ""),
+        "inside_observer",
     ] = optimise_assignment(precinct_subset, observers, "inside_observer")
 
     # Outside both legal
 
-    mask = (precinct["outside_am_legal"] == True) & (  # noqa: E712
-        precinct["outside_am_observer"] == precinct["outside_pm_observer"]
+    mask = (
+        (precinct["outside_am_legal"])
+        & (precinct["outside_am_observer"] == precinct["outside_pm_observer"])
+        & (precinct["outside_am_observer"] != "")
     )
+
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
         precinct_subset, observers, "outside_am_observer"
@@ -257,9 +263,12 @@ if __name__ == "__main__":
 
     # Outside am only legal
 
-    mask = (precinct["outside_am_legal"] == True) & (  # noqa: E712
-        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    mask = (
+        (precinct["outside_am_legal"])
+        & (precinct["outside_am_observer"] != precinct["outside_pm_observer"])
+        & (precinct["outside_am_observer"] != "")
     )
+
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
         precinct_subset, observers, "outside_am_observer"
@@ -268,9 +277,12 @@ if __name__ == "__main__":
 
     # Outside pm only legal
 
-    mask = (precinct["outside_pm_legal"] == True) & (  # noqa: E712
-        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    mask = (
+        (precinct["outside_pm_legal"])
+        & (precinct["outside_am_observer"] != precinct["outside_pm_observer"])
+        & (precinct["outside_pm_observer"] != "")
     )
+
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
         precinct_subset, observers, "outside_pm_observer"
@@ -279,16 +291,21 @@ if __name__ == "__main__":
 
     # Inside non-legal
 
-    precinct_subset = precinct[precinct["inside_legal"] == False]  # noqa: E712
+    precinct_subset = precinct[
+        (~precinct["inside_legal"]) & (precinct["inside_observer"] != "")
+    ]
 
     precinct.loc[
-        precinct["inside_legal"] == False, "inside_observer"  # noqa: E712
+        ~precinct["inside_legal"] & (precinct["inside_observer"] != ""),
+        "inside_observer",
     ] = optimise_assignment(precinct_subset, observers, "inside_observer")
 
     # Outside both not-legal
 
-    mask = (precinct["outside_am_legal"] == False) & (  # noqa: E712
-        precinct["outside_am_observer"] == precinct["outside_pm_observer"]
+    mask = (
+        (~precinct["outside_am_legal"])
+        & (precinct["outside_am_observer"] == precinct["outside_pm_observer"])
+        & (precinct["outside_am_observer"] != "")
     )
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
@@ -299,8 +316,10 @@ if __name__ == "__main__":
 
     # Outside am only legal
 
-    mask = (precinct["outside_am_legal"] == False) & (  # noqa: E712
-        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    mask = (
+        (~precinct["outside_am_legal"])
+        & (precinct["outside_am_observer"] != precinct["outside_pm_observer"])
+        & (precinct["outside_am_observer"] != "")
     )
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
@@ -310,8 +329,10 @@ if __name__ == "__main__":
 
     # Outside pm only legal
 
-    mask = (precinct["outside_pm_legal"] == False) & (  # noqa: E712
-        precinct["outside_am_observer"] != precinct["outside_pm_observer"]
+    mask = (
+        (~precinct["outside_pm_legal"])
+        & (precinct["outside_am_observer"] != precinct["outside_pm_observer"])
+        & (precinct["outside_pm_observer"] != "")
     )
     precinct_subset = precinct[mask]
     optimised_observer_list = optimise_assignment(
@@ -319,8 +340,37 @@ if __name__ == "__main__":
     )
     precinct.loc[mask, "outside_pm_observer"] = optimised_observer_list
 
+    observers_allocated = observers.merge(
+        precinct[["inside_observer", "Polling Place Name"]],
+        left_on="name",
+        right_on="inside_observer",
+        how="left",
+    )
+    observers["inside_location"] = observers_allocated["Polling Place Name"].values
+
+    observers_allocated = observers.merge(
+        precinct[["outside_am_observer", "Polling Place Name"]],
+        left_on="name",
+        right_on="outside_am_observer",
+        how="left",
+    )
+    observers["outside_am_location"] = observers_allocated["Polling Place Name"].values
+
+    observers_allocated = observers.merge(
+        precinct[["outside_pm_observer", "Polling Place Name"]],
+        left_on="name",
+        right_on="outside_pm_observer",
+        how="left",
+    )
+    observers["outside_pm_location"] = observers_allocated["Polling Place Name"].values
+
     precinct.to_excel(
         Path(__file__).parent / "../data/01_output/optimised_assigned_precincts.xlsx",
+        index=False,
+        encoding="utf-8",
+    )
+    observers.to_excel(
+        Path(__file__).parent / "../data/01_output/optimised_assigned_observers.xlsx",
         index=False,
         encoding="utf-8",
     )
