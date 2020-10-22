@@ -3,15 +3,15 @@ observer_google_sheet: R5-Wake-Poll Observer Google Form (Responses)
 columns_map:
   name: 
     col_num: 3
-    fill_missing: "NA"
+    fill_missing: 
   phone_number:
     col_num: 4
-    fill_missing: None
+    fill_missing: ""
   date_entered:
     col_num: 1
-    fill_missing: None
+    fill_missing: 
   election_day:
-    col_num: 24
+    col_num: 36
     fill_missing: "NA"
   legal_background:
     col_num: 25
@@ -22,6 +22,15 @@ columns_map:
   comments:
     col_num: 26
     fill_missing: ""
+  is_rover:
+    col_num: 34
+    fill_missing: 0
+  ev_2020_experience:
+    col_num: 35
+    fill_missing: 0
+  email:
+    col_num: 2
+    fill_missing: None
 
 valid_post_codes: # from: https://www.zillow.com/browse/homes/nc/wake-county/
   - 27518
@@ -105,4 +114,46 @@ outside_both:
     - outside_am_legal
   observer_availability: outside_all_day
   observer_loc: outside_pm_location
+
+
+# For output
+rename_columns:
+  Priority: Rank
+  Polling Place Name: LocationName
+  name: Name
+  phone_number: Phone Number
+  email: Email Address
+
+outside_am_output:
+  observer_col: outside_am_observer
+  start_time: "8:00:00 AM"
+  end_time: "1:30:00 PM"
+  area: outside
+  county: Wake
+  date: 11/03/2020
+
+outside_pm_output:
+  observer_col: outside_pm_observer
+  start_time: "1:30:00 PM"
+  end_time: "7:30:00 PM"
+  area: outside
+  county: Wake
+  date: 11/03/2020
+
+inside_am_output:
+  observer_col: inside_observer
+  start_time: "8:00:00 AM"
+  end_time: "1:30:00 PM"
+  area: inside
+  county: Wake
+  date: 11/03/2020
+
+inside_pm_output:
+  observer_col: inside_observer
+  start_time: "1:30:00 PM"
+  end_time: "7:30:00 PM"
+  area: inside
+  county: Wake
+  date: 11/03/2020
+
 

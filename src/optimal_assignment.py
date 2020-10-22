@@ -109,20 +109,21 @@ def resolve_cycle(pref_network, verbose=False):
 
     # find self cycles
     self_mask = adj_df["to"].apply(len) == 0
+    print(adj_df)
     preferences = {}
     if self_mask.any():
         observers_matched = adj_df.loc[self_mask, "from"]
         if verbose:
             print("Self: ", list(observers_matched))
         preferences.update(dict(pref_network.G.out_edges(list(observers_matched))))
-
-    try:
-        for observer, _ in nx.find_cycle(G_proj):
-            if verbose:
-                print("Cycle : ", observer)
-            preferences.update(dict(pref_network.G.out_edges([observer])))
-    except nx.NetworkXNoCycle:
-        pass
+    else:
+        try:
+            for observer, _ in nx.find_cycle(G_proj):
+                if verbose:
+                    print("Cycle : ", observer)
+                preferences.update(dict(pref_network.G.out_edges([observer])))
+        except nx.NetworkXNoCycle:
+            pass
 
     return preferences
 
@@ -167,14 +168,14 @@ def get_matched_sets(distance_df, merged_df, column_to_optimise, verbose=False):
             merged_df["Polling Place Name"].isin(distance_df.columns[preference]),
             ["Polling Place Name", column_to_optimise],
         ]
-
+        print(preference_edges, ownership_edges)
         PN = PreferenceNetwork(preference_edges, ownership_edges)
         matched_pairs = resolve_cycle(PN, verbose)
         matched_set.update(matched_pairs)
 
         distance_df = distance_df.drop(matched_pairs.keys())
         distance_df = distance_df.drop(matched_pairs.values(), axis=1)
-
+        print(matched_set)
     return matched_set
 
 
@@ -219,7 +220,7 @@ def optimise_assignment(precinct, observers, column_to_optimise):
 
     merged_df["current_distance"] = np.abs(merged_df["Zip"] - merged_df["post_code"])
 
-    matched_set = get_matched_sets(distance_df, merged_df, column_to_optimise)
+    matched_set = get_matched_sets(distance_df, merged_df, column_to_optimise, True)
 
     df = pd.DataFrame([matched_set], index=["pollingstation"]).T.reset_index()
     df.columns = [column_to_optimise, "pollingstation"]
@@ -296,7 +297,7 @@ if __name__ == "__main__":
     ]
 
     precinct.loc[
-        ~precinct["inside_legal"] & (precinct["inside_observer"] != ""),
+        (~precinct["inside_legal"]) & (precinct["inside_observer"] != ""),
         "inside_observer",
     ] = optimise_assignment(precinct_subset, observers, "inside_observer")
 

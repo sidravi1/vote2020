@@ -1,4 +1,6 @@
 data/01_output/*
+data/02_optimisation_input/*
+playground/
 *.swp
 
 #Byte-compiled / optimized / DLL files

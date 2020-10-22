@@ -1,8 +1,8 @@
 import gspread
-
 import pandas as pd
 import numpy as np
 import yaml
+import re
 
 from pathlib import Path
 
@@ -24,20 +24,15 @@ def add_availability_columns(observers_df):
     Adds availability columns to observers dataframe
     """
 
-    observers_df["inside_all_day"] = observers_df["election_day"].str.contains(
-        "ALL DAY - INSIDE"
-    )
-    observers_df["outside_AM"] = observers_df["election_day"].str.contains(
-        "OUTSIDE AM"
-    ) | observers_df["election_day"].str.contains("ALL DAY - OUTSIDE")
-    observers_df["outside_PM"] = observers_df["election_day"].str.contains(
-        "OUTSIDE PM"
-    ) | observers_df["election_day"].str.contains("ALL DAY - OUTSIDE")
+    observers_df["inside_all_day"] = observers_df["election_day"] == "Inside"
 
-    observers_df["outside_all_day"] = (
-        observers_df["outside_AM"] & observers_df["outside_PM"]
-    ) | (observers_df["election_day"].str.contains("ALL DAY - OUTSIDE"))
-    observers_df
+    observers_df["outside_AM"] = observers_df["election_day"].isin(
+        ["Outside AM", "Outside All Day"]
+    )
+    observers_df["outside_PM"] = observers_df["election_day"].isin(
+        ["Outside PM", "Outside All Day"]
+    )
+    observers_df["outside_all_day"] = observers_df["election_day"] == "Outside All Day"
 
     return observers_df
 
@@ -51,13 +46,23 @@ def clean_observer_df(observers_df):
 
     # clean phone number
     observers_df["phone_number"] = (
-        observers_df["phone_number"].str.replace("-", "").replace(" ", "")
+        observers_df["phone_number"].apply(lambda x: re.sub("[^0-9]", "", x))
+        # observers_df["phone_number"].str.replace("-", "").replace(" ", "")
     )
 
+    # clean name by removing spaces at the end
+    observers_df["name"] = observers_df["name"].str.strip()
+
+    # clean email address
+    observers_df["email"] = observers_df["email"].str.lower()
+
     # drop totally missing rows
-    observers_df = observers_df.loc[
-        ~observers_df[["date_entered", "name", "phone_number"]].isna().all(axis=1)
-    ]
+    observers_df = observers_df.loc[~observers_df[["name"]].isna().all(axis=1)]
+
+    # drop rovers
+    observers_df = observers_df.loc[~(observers_df.is_rover == "1")].drop(
+        "is_rover", axis=1
+    )
 
     # clean post-codes - keep to first 5 and cast as int
     observers_df["post_code"] = (
@@ -70,7 +75,8 @@ def clean_observer_df(observers_df):
 
     # drop duplicates
     observers_df = observers_df.sort_values("date_entered")
-    observers_df = observers_df.drop_duplicates(["name", "phone_number"], keep="last")
+    observers_df = observers_df.drop_duplicates(["name"], keep="last")
+    observers_df = observers_df.drop_duplicates(["email"], keep="last")
 
     # map legal background as boolean
     observers_df["legal_background"] = observers_df["legal_background"] == "Yes"
@@ -108,7 +114,9 @@ def get_observer_dataset():
     observer_df = pd.DataFrame(all_columns)
     observer_df = add_availability_columns(observer_df)
     observer_df = clean_observer_df(observer_df)
-    observer_df = observer_df.sort_values(["outside_all_day"], ascending=False)
+    observer_df = observer_df.sort_values(
+        ["ev_2020_experience", "outside_all_day"], ascending=False
+    )
 
     return observer_df
 
@@ -292,6 +300,76 @@ def run_ordered_assignment(precinct, observers):
     return precinct, observers
 
 
+def output_by_shift(precinct, observers, rename_dict, params):
+    """
+    """
+
+    outside_pm_df = precinct.merge(
+        observers, left_on=params["observer_col"], right_on="name", how="left",
+    )
+
+    outside_pm_df.rename(
+        columns=rename_dict, inplace=True,
+    )
+
+    assert outside_pm_df.shape[0] == precinct.shape[0], "Mismatch in number of records"
+
+    outside_pm_df["County"] = params["county"]
+    outside_pm_df["Date"] = params["date"]
+    outside_pm_df["Start Time"] = params["start_time"]
+    outside_pm_df["End Time"] = params["end_time"]
+    outside_pm_df["Area"] = params["area"]
+
+    return outside_pm_df[
+        [
+            "County",
+            "Rank",
+            "LocationName",
+            "Date",
+            "Start Time",
+            "End Time",
+            "Area",
+            "Name",
+            "Phone Number",
+            "Email Address",
+        ]
+    ]
+
+
+def get_lbj_csv(precinct, observers):
+    """
+    """
+
+    precinct_cols = [
+        "Priority",
+        "Polling Place Name",
+        "inside_observer",
+        "outside_am_observer",
+        "outside_pm_observer",
+    ]
+
+    observer_cols = ["name", "phone_number", "email"]
+
+    output_df = pd.DataFrame()
+    for shift in [
+        "outside_am_output",
+        "outside_pm_output",
+        "inside_am_output",
+        "inside_pm_output",
+    ]:
+        params = load_yaml_config()
+        output_df = output_df.append(
+            output_by_shift(
+                precinct[precinct_cols],
+                observers[observer_cols],
+                params["rename_columns"],
+                params[shift],
+            )
+        )
+
+    return output_df
+
+
 if __name__ == "__main__":
 
     observers = get_observer_dataset()
@@ -311,4 +389,12 @@ if __name__ == "__main__":
         encoding="utf-8",
     )
 
-    print(precinct)
+    lbj_output = get_lbj_csv(precinct, observers)
+
+    lbj_output.to_excel(
+        Path(__file__).parent / "../data/01_output/lbj_output.xlsx",
+        index=False,
+        encoding="utf-8",
+    )
+
+    print(lbj_output)
