@@ -11,7 +11,7 @@ def get_manual_precinct_allocation():
 
     precinct = pd.read_excel(
         Path(__file__).parent
-        / "../data/02_optimisation_input/assigned_precincts_reassigned.xlsx"
+        / "../data/02_optimisation_input/assigned_precincts_reassigned_lawyerup.xlsx"
     )
 
     return precinct
