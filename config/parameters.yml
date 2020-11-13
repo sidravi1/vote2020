@@ -2,34 +2,34 @@ observer_google_sheet: R5-Wake-Poll Observer Google Form (Responses)
 
 columns_map:
   name: 
-    col_num: 3
+    col_num: 4
     fill_missing: 
   phone_number:
-    col_num: 4
+    col_num: 5
     fill_missing: ""
   date_entered:
     col_num: 1
     fill_missing: 
   election_day:
-    col_num: 36
+    col_num: 37
     fill_missing: "NA"
   legal_background:
     col_num: 25
     fill_missing: "No"
   post_code:
-    col_num: 5
+    col_num: 7
     fill_missing: 00000
   comments:
-    col_num: 26
+    col_num: 27
     fill_missing: ""
   is_rover:
-    col_num: 34
-    fill_missing: 0
-  ev_2020_experience:
     col_num: 35
     fill_missing: 0
+  ev_2020_experience:
+    col_num: 36
+    fill_missing: 0
   email:
-    col_num: 2
+    col_num: 3
     fill_missing: None
 
 valid_post_codes: # from: https://www.zillow.com/browse/homes/nc/wake-county/
